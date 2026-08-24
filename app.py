@@ -1,0 +1,173 @@
+"""
+Tabla de Carga Semanal — Tienda Propia (Volcom / Rusty)
+=========================================================
+
+Interfaz Streamlit. Toda la lógica de negocio (parsing del Excel, limpieza,
+reglas de vigencia/riesgo/bodega) vive en `logic.py` para poder testearla
+sin levantar la app (ver `test_sintetico.py`). Este archivo solo arma la UI.
+
+Deploy en Streamlit Community Cloud: subir esta carpeta a un repo de GitHub
+(`app.py`, `logic.py`, `requirements.txt`) y apuntar el deploy a `app.py`.
+"""
+
+import pandas as pd
+import streamlit as st
+
+from logic import (
+    MARCAS_POR_DEFECTO,
+    FAMILIAS_EXCLUIR,
+    UMBRAL_COBERTURA_RIESGO,
+    leer_hojas_disponibles,
+    detectar_fila_encabezado,
+    cargar_y_estructurar,
+    construir_formato_largo,
+    limpiar_y_filtrar,
+    calcular_tabla_riesgo,
+)
+
+st.set_page_config(page_title="Tabla de Carga Semanal — Prosurf", layout="wide", page_icon="📦")
+
+st.title("📦 Tabla de Carga Semanal — Tienda Propia (Volcom / Rusty)")
+st.caption(
+    "Entregable fijo de los lunes (ítem 11 del proyecto + reglas confirmadas el 24-08-2026). "
+    "Reemplaza la ejecución celda a celda en Colab."
+)
+
+with st.expander("ℹ️ Qué hace este script y qué asume", expanded=False):
+    st.markdown(
+        f"""
+- Lee el archivo **`4 Semanas - TP (Rip Curl & Prosurf) [DD.MM.AAAA].xlsx`**, hoja
+  *"Resumen 4 Semanas - Pro + Rip"*.
+- Detecta automáticamente la fila de encabezado (busca la fila con `Marca` y `Familia`).
+- Las columnas 0-137 se leen **por posición**, según el orden confirmado en el
+  Diccionario de Datos M300 (Parte B). Las columnas 138 en adelante (28 tiendas
+  × 5 métricas) se arman detectando el patrón `NNNN-NOMBRE TIENDA` en las filas
+  de encabezado.
+- Aplica en orden: filtro de marca → exclusión de {", ".join(FAMILIAS_EXCLUIR)} →
+  exclusión de tiendas 50xx / Rip Curl 30xx / multimarca → filtro de vigencia
+  de temporada (regla 4.1, solo Tienda Propia) → cálculo de cobertura y riesgo
+  de ruptura (cobertura < {UMBRAL_COBERTURA_RIESGO:.0f} semanas con venta activa,
+  regla 4.3) → clasificación por disponibilidad de bodega (regla 4.4).
+- **Primera vez con un archivo real:** revisa el panel "Diagnóstico de
+  estructura" antes de confiar en los resultados — si el archivo cambió de
+  formato, la detección automática puede fallar y hay que ajustarla.
+- La columna **"Prioridad"** de la tabla final es un criterio operativo de
+  orden que propuse yo (accionable primero, luego por cobertura ascendente),
+  no una regla que Francisco haya confirmado — queda pendiente definirla con
+  él (ver pendiente #3 del documento del 24-08).
+        """
+    )
+
+with st.sidebar:
+    st.header("1. Archivo de entrada")
+    archivo = st.file_uploader(
+        "4 Semanas - TP (Rip Curl & Prosurf) [DD.MM.AAAA].xlsx", type=["xlsx"]
+    )
+
+    st.header("2. Alcance del análisis")
+    marcas_input = st.text_input("Marcas a incluir (separadas por coma)", value=", ".join(MARCAS_POR_DEFECTO))
+    marcas_sel = [m.strip() for m in marcas_input.split(",") if m.strip()]
+
+    incluir_ripcurl = st.checkbox("Incluir tiendas Rip Curl (30xx)", value=False)
+    incluir_multimarca = st.checkbox("Incluir tiendas multimarca (2022 / 4006)", value=False)
+
+    st.header("3. Overrides manuales (opcional)")
+    forzar_fila = st.number_input(
+        "Forzar fila de encabezado (1 = primera fila del Excel). Dejar en 0 para autodetectar.",
+        min_value=0, value=0, step=1,
+    )
+
+if archivo is None:
+    st.info("Sube el archivo Excel en la barra lateral para comenzar.")
+    st.stop()
+
+archivo_bytes = archivo.getvalue()
+
+try:
+    hojas = leer_hojas_disponibles(archivo_bytes)
+except Exception as e:
+    st.error(f"No se pudo abrir el archivo como Excel: {e}")
+    st.stop()
+
+hoja_default = next((h for h in hojas if "resumen 4 semanas" in h.lower()), hojas[0])
+hoja_sel = st.selectbox("Hoja a usar", options=hojas, index=hojas.index(hoja_default))
+
+try:
+    fila_encabezado = (forzar_fila - 1) if forzar_fila > 0 else detectar_fila_encabezado(archivo_bytes, hoja_sel)
+except Exception as e:
+    st.error(str(e))
+    st.stop()
+
+try:
+    datos_ancho, diagnostico = cargar_y_estructurar(archivo_bytes, hoja_sel, fila_encabezado)
+except Exception as e:
+    st.error(f"Error al estructurar el archivo: {e}")
+    st.stop()
+
+with st.expander("🔍 Diagnóstico de estructura detectada", expanded=False):
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Fila de encabezado usada", diagnostico["fila_encabezado_usada"] + 1)
+    col2.metric("Columnas leídas", diagnostico["columnas_totales_crudo"])
+    col3.metric("Tiendas detectadas", diagnostico["n_tiendas_detectadas"])
+    if diagnostico["columnas_totales_crudo"] != diagnostico["columnas_esperadas_dictamen"]:
+        st.warning(
+            f"El Diccionario de Datos documentó 278 columnas efectivas; este archivo tiene "
+            f"{diagnostico['columnas_totales_crudo']}. La estructura pudo haber cambiado — "
+            "revisar antes de confiar en el resultado."
+        )
+    st.write("Tiendas detectadas:")
+    st.dataframe(pd.DataFrame({"Tienda": diagnostico["tiendas_detectadas"]}), use_container_width=True, hide_index=True)
+    st.write("Vista previa (primeras filas, formato ancho):")
+    st.dataframe(datos_ancho.head(5), use_container_width=True)
+
+largo = construir_formato_largo(datos_ancho)
+if largo.empty:
+    st.error(
+        "No se pudo construir el formato largo (SKU x Tienda) — probablemente no se "
+        "detectó ninguna tienda. Revisa el diagnóstico de estructura arriba."
+    )
+    st.stop()
+
+df_filtrado = limpiar_y_filtrar(
+    largo, marcas=marcas_sel, excluir_familias=FAMILIAS_EXCLUIR,
+    incluir_ripcurl=incluir_ripcurl, incluir_multimarca=incluir_multimarca,
+)
+
+tabla_riesgo = calcular_tabla_riesgo(df_filtrado)
+
+st.header("Resultado")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Filas SKU × Tienda (vigentes)", f"{len(df_filtrado):,}".replace(",", "."))
+c2.metric("Combinaciones en riesgo", f"{len(tabla_riesgo):,}".replace(",", "."))
+c3.metric("Con bodega disponible", int(tabla_riesgo["Bodega Disponible"].sum()) if len(tabla_riesgo) else 0)
+c4.metric("Sin bodega disponible", int((~tabla_riesgo["Bodega Disponible"]).sum()) if len(tabla_riesgo) else 0)
+
+st.subheader("Tabla de carga — combinaciones SKU/Pack + Tienda en riesgo")
+if tabla_riesgo.empty:
+    st.success("No se detectaron combinaciones en riesgo con los filtros actuales.")
+else:
+    familias_disponibles = sorted(tabla_riesgo["Familia"].dropna().unique())
+    familias_filtro = st.multiselect("Filtrar por Familia", options=familias_disponibles, default=[])
+    tabla_mostrar = tabla_riesgo[tabla_riesgo["Familia"].isin(familias_filtro)] if familias_filtro else tabla_riesgo
+    st.dataframe(tabla_mostrar, use_container_width=True, hide_index=True)
+
+    csv = tabla_riesgo.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "⬇️ Descargar tabla de carga (CSV)",
+        data=csv,
+        file_name="tabla_carga_semanal.csv",
+        mime="text/csv",
+    )
+
+    st.subheader("Familias más afectadas")
+    st.bar_chart(tabla_riesgo["Familia"].value_counts())
+
+    st.subheader("Tiendas más afectadas")
+    st.bar_chart(tabla_riesgo["Tienda"].value_counts().head(15))
+
+st.divider()
+st.caption(
+    "Recuerda: esta tabla es Nivel C (analizar + detectar + explicar + recomendar). "
+    "La decisión final de carga la toma Francisco; las combinaciones 'sin bodega disponible' "
+    "requieren escalar a Compras/Logística antes de poder actuar."
+)

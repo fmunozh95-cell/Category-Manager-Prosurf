@@ -196,6 +196,37 @@ def detectar_nombres_tienda(raw_encabezados: pd.DataFrame, col_inicio: int, n_co
     return nombres
 
 
+# Marcas conocidas (Diccionario de Datos, sección "Contenido: todas las
+# marcas") — se usan solo para AUTOCALIBRAR en qué columna real cae "Marca",
+# nunca para filtrar datos.
+MARCAS_CONOCIDAS = {"VOLCOM", "RUSTY", "RIP CURL", "GLOBE", "VANS", "DRAGON", "ELECTRIC", "CREATURES"}
+POSICION_FIJA_MARCA = 5  # índice de "Marca" dentro de COLUMNAS_FIJAS_0_137
+
+
+def _detectar_offset_columnas(crudo: pd.DataFrame, fila_encabezado: int, offsets_candidatos=(0, 1, 2, 3, -1)) -> tuple[int, dict]:
+    """Algunos cortes de este reporte traen una o más columnas extra al
+    inicio (se detectó una vez, vacía, probablemente un remanente de la
+    tabla dinámica de origen). En vez de asumir que la columna 'Marca' está
+    siempre en la posición fija 5, se prueba correr el bloque de columnas
+    fijas por distintos offsets y se elige el que hace que esa columna
+    contenga más nombres de marca reconocibles en una muestra de filas de
+    datos reales. Devuelve (mejor_offset, {offset: n_coincidencias}) para
+    poder mostrarlo en el diagnóstico."""
+    inicio_datos = fila_encabezado + 1
+    muestra = crudo.iloc[inicio_datos : inicio_datos + 500]
+    resultados = {}
+    for offset in offsets_candidatos:
+        col_idx = POSICION_FIJA_MARCA + offset
+        if col_idx < 0 or col_idx >= crudo.shape[1] or len(muestra) == 0:
+            continue
+        columna = muestra.iloc[:, col_idx].astype(str).str.strip().str.upper()
+        resultados[offset] = int(columna.isin(MARCAS_CONOCIDAS).sum())
+    mejor_offset = max(resultados, key=resultados.get) if resultados else 0
+    if resultados.get(mejor_offset, 0) == 0:
+        mejor_offset = 0  # ninguna coincidencia en ningún offset probado: no adivinar, usar el original
+    return mejor_offset, resultados
+
+
 @st.cache_data(show_spinner=False)
 def cargar_y_estructurar(archivo_bytes: bytes, hoja: str, fila_encabezado: int) -> tuple[pd.DataFrame, dict]:
     """Lee el archivo crudo y devuelve un DataFrame en formato ANCHO (una fila
@@ -205,6 +236,18 @@ def cargar_y_estructurar(archivo_bytes: bytes, hoja: str, fila_encabezado: int) 
     crudo = pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=hoja, header=None)
     # eliminar columnas 100% vacías al final (el diccionario menciona 14 de sobra)
     crudo = crudo.dropna(axis=1, how="all")
+    n_col_total_bruto = crudo.shape[1]
+
+    # Autocalibrar si hay columnas extra al inicio (visto una vez: 1 columna
+    # vacía antes de "Id Estilo", que desalineaba TODO el resto del archivo).
+    offset_columnas, offset_diagnostico = _detectar_offset_columnas(crudo, fila_encabezado)
+    if offset_columnas > 0:
+        crudo = crudo.iloc[:, offset_columnas:]
+    elif offset_columnas < 0:
+        # No se maneja el caso de "faltan columnas" automáticamente — se
+        # deja tal cual y el resto de los chequeos de diagnóstico lo van a
+        # dejar en evidencia (columnas totales / valores por columna raros).
+        offset_columnas = 0
 
     n_col_total = crudo.shape[1]
     n_col_tiendas = n_col_total - 138
@@ -247,7 +290,10 @@ def cargar_y_estructurar(archivo_bytes: bytes, hoja: str, fila_encabezado: int) 
     diagnostico = {
         "fila_encabezado_usada": fila_encabezado,
         "columnas_totales_crudo": n_col_total,
+        "columnas_totales_antes_de_offset": n_col_total_bruto,
         "columnas_esperadas_dictamen": 278,
+        "offset_columnas_aplicado": offset_columnas,
+        "offset_diagnostico": offset_diagnostico,
         "n_tiendas_detectadas": len(tiendas_detectadas),
         "tiendas_detectadas": tiendas_detectadas,
         "filas_datos": len(datos),

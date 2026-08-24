@@ -4,6 +4,7 @@ documentada (138 columnas fijas + N tiendas x 5 métricas), para validar que
 la lógica de parsing/limpieza/riesgo funciona de punta a punta ANTES de
 tener el archivo real. No reemplaza probar con datos reales.
 """
+import os
 import sys
 import numpy as np
 import pandas as pd
@@ -163,5 +164,33 @@ print(riesgo)
 caso_forzado = riesgo[(riesgo["Tienda"].str.startswith("2208")) & (riesgo["Familia"] == "Poleron")]
 assert len(caso_forzado) == 1, "El caso de riesgo forzado (Costanera, Poleron) no aparece en la tabla"
 assert bool(caso_forzado.iloc[0]["Bodega Disponible"]) is True
+
+print("\n=== Test 6: columna extra al inicio (bug real reportado por Francisco) ===")
+# Reproduce exactamente lo que Francisco vio: una columna vacía antes de
+# "Id Estilo" que corre todo el resto de las columnas fijas en 1 posición.
+crudo_con_offset = crudo.copy()
+valores_extra = [None] * len(crudo_con_offset)
+valores_extra[1] = "grupo"  # 1 valor no nulo en algún lado, para que dropna(how="all") NO la elimine sola —
+# así el test realmente ejercita la detección de offset, no el dropna (en el archivo real la columna
+# extra tampoco era 100% NaN en todas las filas, por eso el diagnóstico la contó como columna #279).
+crudo_con_offset.insert(0, "extra", valores_extra)
+crudo_con_offset.columns = range(crudo_con_offset.shape[1])
+
+archivo_test_offset = "test_4semtp_sintetico_con_offset.xlsx"
+with pd.ExcelWriter(archivo_test_offset, engine="openpyxl") as writer:
+    crudo_con_offset.to_excel(writer, sheet_name="Resumen 4 Semanas - Pro + Rip", header=False, index=False)
+
+with open(archivo_test_offset, "rb") as f:
+    archivo_bytes_offset = f.read()
+
+fila_enc_offset = detectar_fila_encabezado(archivo_bytes_offset, "Resumen 4 Semanas - Pro + Rip")
+datos_ancho_offset, diag_offset = cargar_y_estructurar(archivo_bytes_offset, "Resumen 4 Semanas - Pro + Rip", fila_enc_offset)
+print("Offset detectado:", diag_offset["offset_columnas_aplicado"], "(esperado 1)")
+print("Coincidencias por offset probado:", diag_offset["offset_diagnostico"])
+assert diag_offset["offset_columnas_aplicado"] == 1
+assert set(datos_ancho_offset["Marca"].unique()) == {"Volcom", "Rip Curl"}, (
+    f"Marca no quedó bien alineada tras corregir el offset: {datos_ancho_offset['Marca'].unique()}"
+)
+os.remove(archivo_test_offset)
 
 print("\n✅ TODOS LOS TESTS PASARON")

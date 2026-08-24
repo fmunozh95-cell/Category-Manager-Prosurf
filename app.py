@@ -127,15 +127,27 @@ with st.sidebar:
     incluir_multimarca = st.checkbox("Incluir tiendas multimarca (2022 / 4006)", value=False)
 
 with st.expander("🔍 Diagnóstico de estructura detectada", expanded=False):
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Fila de encabezado usada", diagnostico["fila_encabezado_usada"] + 1)
     col2.metric("Columnas leídas", diagnostico["columnas_totales_crudo"])
     col3.metric("Tiendas detectadas", diagnostico["n_tiendas_detectadas"])
+    col4.metric("Columnas extra al inicio recortadas", diagnostico["offset_columnas_aplicado"])
+
+    if diagnostico["offset_columnas_aplicado"] > 0:
+        st.info(
+            f"Se detectaron **{diagnostico['offset_columnas_aplicado']} columna(s) extra al "
+            f"inicio del archivo** (el archivo bruto tenía {diagnostico['columnas_totales_antes_de_offset']} "
+            f"columnas antes de recortarlas) y se descartaron automáticamente para que 'Marca' y "
+            "el resto de las columnas fijas calcen con el contenido real. Coincidencias de nombre "
+            f"de marca probadas por offset: {diagnostico['offset_diagnostico']}."
+        )
+
     if diagnostico["columnas_totales_crudo"] != diagnostico["columnas_esperadas_dictamen"]:
         st.warning(
-            f"El Diccionario de Datos documentó 278 columnas efectivas; este archivo tiene "
-            f"{diagnostico['columnas_totales_crudo']}. La estructura pudo haber cambiado — "
-            "revisar antes de confiar en el resultado."
+            f"El Diccionario de Datos documentó 278 columnas efectivas; después de ajustar por "
+            f"columnas extra al inicio, este archivo tiene {diagnostico['columnas_totales_crudo']}. "
+            "La estructura pudo haber cambiado más allá de solo el offset inicial — revisar antes "
+            "de confiar en el resultado."
         )
     if diagnostico["nombres_duplicados"]:
         st.error(

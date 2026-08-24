@@ -64,14 +64,7 @@ with st.sidebar:
         "4 Semanas - TP (Rip Curl & Prosurf) [DD.MM.AAAA].xlsx", type=["xlsx"]
     )
 
-    st.header("2. Alcance del análisis")
-    marcas_input = st.text_input("Marcas a incluir (separadas por coma)", value=", ".join(MARCAS_POR_DEFECTO))
-    marcas_sel = [m.strip() for m in marcas_input.split(",") if m.strip()]
-
-    incluir_ripcurl = st.checkbox("Incluir tiendas Rip Curl (30xx)", value=False)
-    incluir_multimarca = st.checkbox("Incluir tiendas multimarca (2022 / 4006)", value=False)
-
-    st.header("3. Overrides manuales (opcional)")
+    st.header("2. Overrides manuales (opcional)")
     forzar_fila = st.number_input(
         "Forzar fila de encabezado (1 = primera fila del Excel). Dejar en 0 para autodetectar.",
         min_value=0, value=0, step=1,
@@ -104,6 +97,35 @@ except Exception as e:
     st.error(f"Error al estructurar el archivo: {e}")
     st.stop()
 
+# Lista de marcas armada con los valores REALES detectados en el archivo (no
+# texto libre), para evitar diferencias de tipeo/mayúsculas y, de paso, para
+# que si la columna "Marca" viene mal alineada se note de inmediato acá
+# (aparecerían valores raros en vez de nombres de marca).
+if "Marca" in datos_ancho.columns:
+    marcas_disponibles = sorted(datos_ancho["Marca"].dropna().astype(str).str.strip().unique())
+else:
+    marcas_disponibles = []
+
+marcas_default = [
+    m for m in marcas_disponibles
+    if m.strip().upper() in {d.upper() for d in MARCAS_POR_DEFECTO}
+] or marcas_disponibles
+
+with st.sidebar:
+    st.header("3. Alcance del análisis")
+    if marcas_disponibles:
+        marcas_sel = st.multiselect(
+            "Marcas a incluir (detectadas en el archivo)",
+            options=marcas_disponibles,
+            default=marcas_default,
+        )
+    else:
+        st.error("No se encontró la columna 'Marca' en el archivo leído.")
+        marcas_sel = []
+
+    incluir_ripcurl = st.checkbox("Incluir tiendas Rip Curl (30xx)", value=False)
+    incluir_multimarca = st.checkbox("Incluir tiendas multimarca (2022 / 4006)", value=False)
+
 with st.expander("🔍 Diagnóstico de estructura detectada", expanded=False):
     col1, col2, col3 = st.columns(3)
     col1.metric("Fila de encabezado usada", diagnostico["fila_encabezado_usada"] + 1)
@@ -126,6 +148,24 @@ with st.expander("🔍 Diagnóstico de estructura detectada", expanded=False):
         )
     st.write("Tiendas detectadas:")
     st.dataframe(pd.DataFrame({"Tienda": diagnostico["tiendas_detectadas"]}), use_container_width=True, hide_index=True)
+
+    st.write(
+        "**Valores reales encontrados en columnas dimensión clave** — esto confirma si las "
+        "columnas fijas (0-137) calzaron con el contenido esperado. Si 'Marca' no muestra "
+        "nombres de marca reconocibles acá, el problema es de alineación de columnas."
+    )
+    cols_preview = st.columns(3)
+    for i, (col, valores) in enumerate(diagnostico["valores_columnas_clave"].items()):
+        with cols_preview[i % 3]:
+            st.markdown(f"**{col}**")
+            if valores is None:
+                st.caption("⚠️ Esta columna no existe con este nombre en el archivo leído.")
+            else:
+                st.dataframe(
+                    pd.DataFrame(valores, columns=["Valor", "Filas"]),
+                    use_container_width=True, hide_index=True, height=200,
+                )
+
     st.write("Vista previa (primeras filas, formato ancho):")
     st.dataframe(datos_ancho.head(5), use_container_width=True)
 

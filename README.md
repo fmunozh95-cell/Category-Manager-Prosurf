@@ -56,6 +56,7 @@ streamlit run app.py
 Bugs encontrados y corregidos el mismo día ya probando contra el archivo real:
 1. `ValueError: Duplicate column names found` — dos bloques de tienda detectados con el mismo nombre. Se agregó deduplicación automática + aviso visible en el diagnóstico.
 2. `KeyError: '_vigente' not found in axis` — si el filtro de marca/familia/tienda dejaba el DataFrame en 0 filas, un bug de pandas al usar `.apply(axis=1)` sobre un DataFrame vacío hacía desaparecer todas las columnas. Se reescribió el filtro de vigencia de temporada de forma vectorizada (sin `.apply` fila por fila) y se agregó un panel "Embudo de filtrado" que muestra cuántas filas sobreviven en cada etapa, para detectar de inmediato si algún filtro se está comiendo todo el archivo.
+3. **El embudo mostró 0 filas justo en el filtro de marca**, con 608.496 filas iniciales (= 21.732 SKU × 28 tiendas, calza exacto con lo ya validado en Colab). Es decir, la columna "Marca" del archivo real no contenía "Volcom"/"Rusty" donde el script esperaba. Se cambió el campo de texto libre por un **multiselect que se arma con los valores reales detectados en la columna "Marca"** (para eliminar el riesgo de tipeo) y se agregó un panel que muestra los valores reales de columnas dimensión clave (Marca, Familia, Temporada, Año Producto, Definicion, Genero) con su conteo de filas — así se puede confirmar de un vistazo si las columnas están bien alineadas o si hay que ajustar la lectura posicional de las primeras 138 columnas.
 
 ## Lo que falta validar con el archivo real (próxima sesión)
 

@@ -230,6 +230,20 @@ def cargar_y_estructurar(archivo_bytes: bytes, hoja: str, fila_encabezado: int) 
     datos = datos.drop(columns=[c for c in datos.columns if c.startswith("_sep_")], errors="ignore")
 
     tiendas_detectadas = sorted(set(nombres_tienda_por_col))
+
+    # Vista de valores reales de columnas dimensión clave — para confirmar
+    # (o descartar) que las columnas fijas 0-137 realmente calzaron con el
+    # contenido esperado. Si "Marca" no muestra nombres de marca reales acá,
+    # el problema es de alineación de columnas, no de las reglas de filtro.
+    columnas_para_previsualizar = ["Marca", "Familia", "Temporada", "Año Producto", "Definicion", "Genero"]
+    valores_columnas_clave = {}
+    for col in columnas_para_previsualizar:
+        if col in datos.columns:
+            conteo = datos[col].value_counts(dropna=False).head(15)
+            valores_columnas_clave[col] = [(str(k), int(v)) for k, v in conteo.items()]
+        else:
+            valores_columnas_clave[col] = None  # la columna ni siquiera existe con ese nombre
+
     diagnostico = {
         "fila_encabezado_usada": fila_encabezado,
         "columnas_totales_crudo": n_col_total,
@@ -238,6 +252,7 @@ def cargar_y_estructurar(archivo_bytes: bytes, hoja: str, fila_encabezado: int) 
         "tiendas_detectadas": tiendas_detectadas,
         "filas_datos": len(datos),
         "nombres_duplicados": nombres_duplicados,
+        "valores_columnas_clave": valores_columnas_clave,
     }
     return datos, diagnostico
 

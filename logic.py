@@ -302,8 +302,13 @@ def limpiar_y_filtrar(
     excluir_familias: list[str],
     incluir_ripcurl: bool = False,
     incluir_multimarca: bool = False,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict]:
+    """Devuelve (df_filtrado, embudo). `embudo` es un dict {etapa: n_filas} para
+    poder mostrar dónde se pierden filas — importante porque un filtro que no
+    calza con el dato real (p.ej. Marca con mayúsculas/espacios distintos)
+    puede dejar el DataFrame en 0 filas silenciosamente."""
     df = largo.copy()
+    embudo = {"Filas iniciales (SKU × Tienda)": len(df)}
 
     # Regla 4.5 — negativos en stock se tratan como 0.
     for col in ["Stock # MOM", COL_BODEGA_DISPONIBLE]:
@@ -313,8 +318,14 @@ def limpiar_y_filtrar(
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    df = df[df["Marca"].isin(marcas)]
+    # Comparación de marca tolerante a espacios/mayúsculas (el dato mostrado
+    # en la tabla final sigue siendo el original, sin transformar).
+    marcas_norm = {m.strip().upper() for m in marcas}
+    df = df[df["Marca"].astype(str).str.strip().str.upper().isin(marcas_norm)]
+    embudo[f"Tras filtrar marca ({', '.join(marcas)})"] = len(df)
+
     df = df[~df["Familia"].astype(str).str.strip().str.lower().isin([f.lower() for f in excluir_familias])]
+    embudo["Tras excluir familias (Bolsa de Papel, etc.)"] = len(df)
 
     codigo_tienda = df["Tienda"].astype(str).str.extract(r"^(\d{3,4})")[0]
     prefijo2 = codigo_tienda.str[:2]
@@ -324,12 +335,22 @@ def limpiar_y_filtrar(
     excluir_multimarca = (~incluir_multimarca) & codigo_tienda.isin(CODIGOS_MULTIMARCA)
 
     df = df[~(excluir_50xx | excluir_ripcurl | excluir_multimarca)]
+    embudo["Tras excluir tiendas 50xx / Rip Curl / multimarca"] = len(df)
 
-    # Regla 4.1 — vigencia de temporada (solo Tienda Propia).
-    df["_vigente"] = df.apply(lambda r: _temporada_vigente(r.get("Temporada"), r.get("Año Producto")), axis=1)
-    df = df[df["_vigente"]].drop(columns="_vigente")
+    # Regla 4.1 — vigencia de temporada (solo Tienda Propia). Vectorizado (no
+    # .apply row-wise) para evitar un bug conocido de pandas donde .apply(axis=1)
+    # sobre un DataFrame de 0 filas puede hacer desaparecer las columnas.
+    temporada_norm = df["Temporada"].astype(str).str.strip().str.upper()
+    anio_producto = pd.to_numeric(df["Año Producto"], errors="coerce")
+    vigente = (
+        (temporada_norm == "TODA TEMPORADA")
+        | ((temporada_norm == "INVIERNO") & (anio_producto == 2026))
+        | ((temporada_norm == "VERANO") & anio_producto.isin([2026, 2027]))
+    )
+    df = df[vigente.fillna(False)]
+    embudo["Tras filtro de vigencia de temporada (regla 4.1)"] = len(df)
 
-    return df.reset_index(drop=True)
+    return df.reset_index(drop=True), embudo
 
 
 def calcular_tabla_riesgo(df: pd.DataFrame) -> pd.DataFrame:

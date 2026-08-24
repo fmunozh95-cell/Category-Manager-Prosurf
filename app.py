@@ -137,10 +137,26 @@ if largo.empty:
     )
     st.stop()
 
-df_filtrado = limpiar_y_filtrar(
+df_filtrado, embudo = limpiar_y_filtrar(
     largo, marcas=marcas_sel, excluir_familias=FAMILIAS_EXCLUIR,
     incluir_ripcurl=incluir_ripcurl, incluir_multimarca=incluir_multimarca,
 )
+
+with st.expander("🔍 Embudo de filtrado (dónde se pierden filas)", expanded=df_filtrado.empty):
+    st.dataframe(
+        pd.DataFrame({"Etapa": list(embudo.keys()), "Filas": list(embudo.values())}),
+        use_container_width=True, hide_index=True,
+    )
+    if df_filtrado.empty:
+        st.error(
+            "No quedó ninguna fila después de los filtros. Revisa la etapa donde las filas "
+            "llegan a 0 — lo más común es que el valor real de 'Marca' no calce con las marcas "
+            "seleccionadas arriba (revisa mayúsculas/espacios), o que la vigencia de temporada "
+            "esté descartando todo porque 'Año Producto' no viene en el formato esperado."
+        )
+
+if df_filtrado.empty:
+    st.stop()
 
 tabla_riesgo = calcular_tabla_riesgo(df_filtrado)
 

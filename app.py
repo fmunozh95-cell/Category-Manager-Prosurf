@@ -115,6 +115,15 @@ with st.expander("🔍 Diagnóstico de estructura detectada", expanded=False):
             f"{diagnostico['columnas_totales_crudo']}. La estructura pudo haber cambiado — "
             "revisar antes de confiar en el resultado."
         )
+    if diagnostico["nombres_duplicados"]:
+        st.error(
+            "Se detectaron nombres repetidos al identificar bloques de tienda (probablemente "
+            "el mismo código/nombre de tienda apareció en más de un bloque de 5 columnas). "
+            "Para no mezclar datos de dos tiendas bajo el mismo nombre, esos bloques quedaron "
+            "renombrados con un sufijo `[dup2]`, `[dup3]`, etc. y **se excluyen del análisis** "
+            "hasta que se revisen manualmente. Nombres que chocaron:\n\n"
+            + "\n".join(f"- {n}" for n in diagnostico["nombres_duplicados"])
+        )
     st.write("Tiendas detectadas:")
     st.dataframe(pd.DataFrame({"Tienda": diagnostico["tiendas_detectadas"]}), use_container_width=True, hide_index=True)
     st.write("Vista previa (primeras filas, formato ancho):")

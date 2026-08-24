@@ -223,6 +223,7 @@ def cargar_y_estructurar(archivo_bytes: bytes, hoja: str, fila_encabezado: int) 
         nombres_columnas.append(f"{tienda} || {metrica}")
 
     datos = datos.iloc[:, : len(nombres_columnas)]
+    nombres_columnas, nombres_duplicados = _deduplicar_nombres(nombres_columnas)
     datos.columns = nombres_columnas
 
     # quitar columnas separadoras vacías generadas por el diccionario (_sep_*)
@@ -236,8 +237,32 @@ def cargar_y_estructurar(archivo_bytes: bytes, hoja: str, fila_encabezado: int) 
         "n_tiendas_detectadas": len(tiendas_detectadas),
         "tiendas_detectadas": tiendas_detectadas,
         "filas_datos": len(datos),
+        "nombres_duplicados": nombres_duplicados,
     }
     return datos, diagnostico
+
+
+def _deduplicar_nombres(nombres: list[str]) -> tuple[list[str], list[str]]:
+    """Garantiza nombres de columna únicos (requisito de pandas/Arrow para
+    poder mostrar/exportar el DataFrame). Si el mismo nombre de tienda quedó
+    asignado a más de un bloque de 5 columnas —lo cual señala que la
+    detección automática de tiendas encontró el mismo texto en dos bloques
+    distintos y probablemente necesita revisión manual—, se le agrega un
+    sufijo [dup2], [dup3], etc. y se reporta en el diagnóstico para que quede
+    visible, en vez de fallar silenciosamente o mezclar datos de dos bloques
+    bajo el mismo nombre."""
+    conteo: dict[str, int] = {}
+    resultado = []
+    duplicados: list[str] = []
+    for nombre in nombres:
+        conteo[nombre] = conteo.get(nombre, 0) + 1
+        if conteo[nombre] == 1:
+            resultado.append(nombre)
+        else:
+            resultado.append(f"{nombre} [dup{conteo[nombre]}]")
+            if nombre not in duplicados:
+                duplicados.append(nombre)
+    return resultado, sorted(duplicados)
 
 
 # ---------------------------------------------------------------------------
